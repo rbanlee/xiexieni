@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>感谢状合成工具</title>
+    <style>
+        body { max-width: 1200px; margin: 20px auto; padding: 20px; font-family: Arial, sans-serif; }
+        .controls { margin: 20px 0; display: grid; gap: 15px; }
+        .control-group { border: 1px solid #eee; padding: 15px; border-radius: 8px; }
+        .form-row { display: flex; gap: 10px; align-items: center; margin: 10px 0; }
+        label { min-width: 120px; font-weight: bold; }
+        input, select, button, textarea { padding: 8px; margin: 5px; }
+        canvas { border: 1px solid #ddd; margin-top: 20px; display: block; }
+        .error { color: red; margin: 5px 0; }
+        .dimension-controls { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+        .color-picker { width: 40px; height: 30px; }
+    </style>
+</head>
+<body>
+    <h1>感谢状合成工具</h1>
+    
+    <div class="controls">
+        <!-- 图片上传 -->
+        <div class="control-group">
+            <div class="form-row">
+                <label>模板图片：（如果不更改，不用上传）</label>
+                <input type="file" id="templateUpload" accept="image/*">
+            </div>
+            <div class="form-row">
+                <label>内容图片：</label>
+                <input type="file" id="contentUpload" accept="image/*">
+            </div>
+        </div>
+
+        <!-- 图片位置控制 -->
+        <div class="control-group">
+            <h3>图片位置设置</h3>
+            <div class="dimension-controls">
+                <div class="form-row">
+                    <label>X坐标：</label>
+                    <input type="number" id="imgX" value="37" min="0">
+                </div>
+                <div class="form-row">
+                    <label>Y坐标：</label>
+                    <input type="number" id="imgY" value="30" min="0">
+                </div>
+                <div class="form-row">
+                    <label>宽度：</label>
+                    <input type="number" id="imgWidth" value="520" min="10">
+                </div>
+                <div class="form-row">
+                    <label>高度：</label>
+                    <input type="number" id="imgHeight" value="700" min="10">
+                </div>
+            </div>
+        </div>
+
+        <!-- 文字控制 -->
+        <div class="control-group">
+            <div class="text-control">
+                <div class="form-row">
+                    <label>主文本：</label>
+                    <input type="text" id="text1" placeholder="主文本" style="flex:2;">
+                    <input type="color" id="text1Color" value="#6c260d" class="color-picker">
+                    <input type="number" id="text1Size" value="25" min="10" style="width:80px;">
+                </div>
+            </div>
+            
+            <div class="text-control">
+                <div class="form-row">
+                    <label>副文本：</label>
+                    <textarea id="text2" placeholder="支持多行文本" rows="3" style="flex:2;"></textarea>
+                    <input type="color" id="text2Color" value="#6c260d" class="color-picker">
+                    <input type="number" id="text2Size" value="24" min="10" style="width:80px;">
+                </div>
+            </div>
+
+            <div class="text-control">
+                <div class="form-row">
+                    <label>底部文本：</label>
+                    <input type="text" id="text3" placeholder="底部文本" style="flex:2;">
+                    <input type="color" id="text3Color" value="#fdd9c9" class="color-picker">
+                    <input type="number" id="text3Size" value="14" min="10" style="width:80px;">
+                </div>
+            </div>
+        </div>
+
+        <button onclick="generate()" style="padding: 12px 24px;">生成图片</button>
+        <div id="globalError" class="error"></div>
+    </div>
+
+    <canvas id="canvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        let templateImage = null;
+        let contentImage = null;
+        const defaultTemplateImageUrl = 'https://i.postimg.cc/Sxtns49B/MB.png';
+
+        // 初始化配置
+        const config = {
+            canvasWidth: 1080,
+            canvasHeight: 764
+        };
+
+        // 初始化画布
+        function initCanvas() {
+            canvas.width = config.canvasWidth;
+            canvas.height = config.canvasHeight;
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
+
+        // 图片加载器
+        function loadImage(fileOrUrl) {
+            return new Promise((resolve, reject) => {
+                const img = new Image();
+                if (typeof fileOrUrl === 'string') { // Handle URL
+                    img.crossOrigin = "Anonymous"; // Important for cross-origin images
+                    img.onload = () => resolve(img);
+                    img.onerror = () => reject(new Error('默认模板图片加载失败'));
+                    img.src = fileOrUrl;
+                } else { // Handle File object
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        img.onload = () => resolve(img);
+                        img.onerror = () => reject(new Error('图片加载失败'));
+                        img.src = e.target.result;
+                    };
+                    reader.onerror = () => reject(new Error('文件读取失败'));
+                    reader.readAsDataURL(fileOrUrl);
+                }
+            });
+        }
+
+        // 图片上传处理
+        document.getElementById('templateUpload').addEventListener('change', async function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            try {
+                templateImage = await loadImage(file);
+                redrawCanvas();
+            } catch (error) {
+                showError(error.message);
+            }
+        });
+
+        document.getElementById('contentUpload').addEventListener('change', async function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            try {
+                contentImage = await loadImage(file);
+                redrawCanvas();
+            } catch (error) {
+                showError(error.message);
+            }
+        });
+
+        // 实时参数更新
+        document.querySelectorAll('input, textarea').forEach(element => {
+            element.addEventListener('input', () => {
+                if (element.checkValidity()) redrawCanvas();
+            });
+        });
+
+        // 重绘画布
+        function redrawCanvas() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // 绘制模板
+            if (isValidImage(templateImage)) {
+                ctx.drawImage(templateImage, 0, 0, canvas.width, canvas.height);
+            }
+
+            // 绘制内容图片
+            if (isValidImage(contentImage)) {
+                const imgX = parseInt(document.getElementById('imgX').value);
+                const imgY = parseInt(document.getElementById('imgY').value);
+                const imgWidth = parseInt(document.getElementById('imgWidth').value);
+                const imgHeight = parseInt(document.getElementById('imgHeight').value);
+
+                ctx.drawImage(
+                    contentImage,
+                    imgX,
+                    imgY,
+                    imgWidth,
+                    imgHeight
+                );
+            }
+
+            // 绘制文字
+            drawTextElements();
+        }
+
+        // 文字绘制功能
+        function drawTextElements() {
+            // 主文本
+            drawText(
+                'text1',
+                document.getElementById('text1Color').value,
+                document.getElementById('text1Size').value
+            );
+
+            // 副文本（多行处理）
+            drawMultiLineText(
+                'text2',
+                document.getElementById('text2Color').value,
+                document.getElementById('text2Size').value
+            );
+
+            // 底部文本
+            drawText(
+                'text3',
+                document.getElementById('text3Color').value,
+                document.getElementById('text3Size').value
+            );
+        }
+
+        function drawText(elementId, color, size) {
+            const text = document.getElementById(elementId).value;
+            if (!text) return;
+
+            const config = getTextPosition(elementId);
+            ctx.save();
+            if (elementId === 'text1') {
+                ctx.font = `bold ${size}px 微软雅黑`; // 主文本使用粗体
+            } else {
+                ctx.font = `${size}px 微软雅黑`;
+            }
+            ctx.fillStyle = color;
+            ctx.textAlign = config.align || 'left';
+            ctx.fillText(text, config.x, config.y);
+            ctx.restore();
+        }
+
+        function drawMultiLineText(elementId, color, size) {
+            const textarea = document.getElementById(elementId);
+            const lines = textarea.value.split('\n');
+            const config = getTextPosition(elementId);
+
+            ctx.save();
+            ctx.font = `${size}px 微软雅黑`;
+            ctx.fillStyle = color;
+            ctx.textAlign = config.align || 'left';
+
+            let y = config.y;
+            const lineHeight = size * 1.2;
+            
+            lines.forEach(line => {
+                ctx.fillText(line, config.x, y);
+                y += lineHeight;
+            });
+
+            ctx.restore();
+        }
+
+        function getTextPosition(elementId) {
+            // 根据元素ID返回位置配置
+            const positions = {
+                text1: { x: 630, y: 273 },
+                text2: { x: 630, y: 318 },
+                text3: { 
+                    x: canvas.width - 30,
+                    y: canvas.height - 30,
+                    align: 'right'
+                }
+            };
+            return positions[elementId];
+        }
+
+        // 生成最终图片
+        function generate() {
+            try {
+                if (!isValidImage(templateImage)) throw new Error('请上传模板图片');
+                if (!isValidImage(contentImage)) throw new Error('请上传内容图片');
+                
+                const link = document.createElement('a');
+                link.download = `合成结果_${Date.now()}.png`;
+                link.href = canvas.toDataURL('image/png');
+                link.click();
+            } catch (error) {
+                showError(error.message);
+            }
+        }
+
+        // 辅助函数
+        function isValidImage(img) {
+            return img && img.complete && img.naturalWidth > 0;
+        }
+
+        function showError(msg) {
+            document.getElementById('globalError').textContent = msg;
+            setTimeout(() => document.getElementById('globalError').textContent = '', 3000);
+        }
+
+        // 加载默认模板图片
+        async function loadDefaultTemplate() {
+            try {
+                templateImage = await loadImage(defaultTemplateImageUrl);
+                redrawCanvas();
+            } catch (error) {
+                showError(error.message);
+                // Fallback: ensure canvas is still initialized if default image fails
+                if (!templateImage) {
+                     initCanvas(); // Re-initialize if needed, or ensure it's clean
+                }
+            }
+        }
+
+        // 初始化
+        initCanvas();
+        loadDefaultTemplate(); // Load default template after canvas initialization
+    </script>
+</body>
+</html>
